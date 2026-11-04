@@ -295,10 +295,8 @@ void PrintJob::writeJob(std::vector<uint8_t> data) {
   }
 
   auto pages = FPDF_GetPageCount(doc);
-  auto marginLeft = GetDeviceCaps(hDC, PHYSICALOFFSETX);
-  auto marginTop = GetDeviceCaps(hDC, PHYSICALOFFSETY);
-  auto paperWidth = GetDeviceCaps(hDC, PHYSICALWIDTH);
-  auto paperHeight = GetDeviceCaps(hDC, PHYSICALHEIGHT);
+  auto printableWidth = GetDeviceCaps(hDC, HORZRES);
+  auto printableHeight = GetDeviceCaps(hDC, VERTRES);
 
   for (auto pageNum = 0; pageNum < pages; pageNum++) {
     StartPage(hDC);
@@ -312,17 +310,26 @@ void PrintJob::writeJob(std::vector<uint8_t> data) {
     auto pdfWidth = FPDF_GetPageWidth(page);
     auto pdfHeight = FPDF_GetPageHeight(page);
 
-    // Shrink pages larger than the paper (e.g. scans whose page size is their
-    // pixel count, or drivers whose LOGPIXELS disagree with PHYSICALWIDTH);
-    // otherwise GDI clips everything past the paper edge.
-    auto fit = (std::min)({1.0, paperWidth / (pdfWidth * dpiX),
-                           paperHeight / (pdfHeight * dpiY)});
-    int bWidth = static_cast<int>(pdfWidth * dpiX * fit);
-    int bHeight = static_cast<int>(pdfHeight * dpiY * fit);
+    // A full-size landscape page on portrait paper (or vice versa) is turned
+    // 90 degrees, otherwise it would be shrunk to the short side of the paper.
+    // Narrow strips (e.g. payment slips) whose short side fits stay upright.
+    auto rotate =
+        (pdfWidth > pdfHeight) != (printableWidth > printableHeight) &&
+        (std::min)(pdfWidth * dpiX, pdfHeight * dpiY) >
+            (std::min)(printableWidth, printableHeight);
+    auto pageWidth = rotate ? pdfHeight : pdfWidth;
+    auto pageHeight = rotate ? pdfWidth : pdfHeight;
 
-    FPDF_RenderPage(hDC, page, (paperWidth - bWidth) / 2 - marginLeft,
-                    (paperHeight - bHeight) / 2 - marginTop, bWidth, bHeight,
-                    0, FPDF_ANNOT | FPDF_PRINTING);
+    // Shrink pages to the printable area (e.g. scans whose page size is their
+    // pixel count, or drivers whose LOGPIXELS disagree with HORZRES);
+    // otherwise GDI clips everything past it.
+    auto fit = (std::min)({1.0, printableWidth / (pageWidth * dpiX),
+                           printableHeight / (pageHeight * dpiY)});
+    int bWidth = static_cast<int>(pageWidth * dpiX * fit);
+    int bHeight = static_cast<int>(pageHeight * dpiY * fit);
+
+    FPDF_RenderPage(hDC, page, 0, 0, bWidth, bHeight, rotate ? 1 : 0,
+                    FPDF_ANNOT | FPDF_PRINTING);
     FPDF_ClosePage(page);
     r = EndPage(hDC);
   }
