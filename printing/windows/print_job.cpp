@@ -22,6 +22,7 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <tchar.h>
+#include <algorithm>
 #include <codecvt>
 #include <fstream>
 #include <iterator>
@@ -296,6 +297,8 @@ void PrintJob::writeJob(std::vector<uint8_t> data) {
   auto pages = FPDF_GetPageCount(doc);
   auto marginLeft = GetDeviceCaps(hDC, PHYSICALOFFSETX);
   auto marginTop = GetDeviceCaps(hDC, PHYSICALOFFSETY);
+  auto paperWidth = GetDeviceCaps(hDC, PHYSICALWIDTH);
+  auto paperHeight = GetDeviceCaps(hDC, PHYSICALHEIGHT);
 
   for (auto pageNum = 0; pageNum < pages; pageNum++) {
     StartPage(hDC);
@@ -309,11 +312,17 @@ void PrintJob::writeJob(std::vector<uint8_t> data) {
     auto pdfWidth = FPDF_GetPageWidth(page);
     auto pdfHeight = FPDF_GetPageHeight(page);
 
-    int bWidth = static_cast<int>(pdfWidth * dpiX);
-    int bHeight = static_cast<int>(pdfHeight * dpiY);
+    // Shrink pages larger than the paper (e.g. scans whose page size is their
+    // pixel count, or drivers whose LOGPIXELS disagree with PHYSICALWIDTH);
+    // otherwise GDI clips everything past the paper edge.
+    auto fit = (std::min)({1.0, paperWidth / (pdfWidth * dpiX),
+                           paperHeight / (pdfHeight * dpiY)});
+    int bWidth = static_cast<int>(pdfWidth * dpiX * fit);
+    int bHeight = static_cast<int>(pdfHeight * dpiY * fit);
 
-    FPDF_RenderPage(hDC, page, -marginLeft, -marginTop, bWidth, bHeight, 0,
-                    FPDF_ANNOT | FPDF_PRINTING);
+    FPDF_RenderPage(hDC, page, (paperWidth - bWidth) / 2 - marginLeft,
+                    (paperHeight - bHeight) / 2 - marginTop, bWidth, bHeight,
+                    0, FPDF_ANNOT | FPDF_PRINTING);
     FPDF_ClosePage(page);
     r = EndPage(hDC);
   }
